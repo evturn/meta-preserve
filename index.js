@@ -5,30 +5,36 @@ import { extract } from 'exifdata'
 import { ExifImage as Parser } from 'exif'
 import 'shelljs/global'
 
-fs.readdir('images', (err, files) => {
-  const data = files
-    .filter(selectImageFiles)
-    .map(createPathToFile)
+const [_, __, dirname] = process.argv
+const INPUT_PATH = path.resolve(process.cwd(), dirname)
+
+fs.readdir(INPUT_PATH, (err, files) => {
+  files
+    .filter(x => x.toLowerCase().includes('.jpg' || '.png'))
+    .map(x => ({path: `${INPUT_PATH}/${x}`}))
     .map(extractMetadata)
 })
 
-function selectImageFiles(file) {
-  const filename = file.toLowerCase()
-  return filename.includes('.jpg') || filename.includes('.png')
-}
-
-function createPathToFile(filename) {
-  return { path: path.join(process.cwd(), 'images', filename) }
-}
-
-function extractMetadata(image) {
+function extractMetadata(img) {
   return new Promise((resolve, reject) => {
-    extract(image.path, (e, res) => resolve(e ? retryParse(image.path) : res))
+    extract(img.path, (e, res) => resolve(e ? retryParse(img.path) : res))
   })
   .then(parseOriginalDate)
-  .then(formatDateForCommand(image))
+  .then(formatDateForCommand(img))
   .then(executeShellScript)
   .catch(e => console.log('I got your error right here', e.message))
+}
+
+function parseOriginalDate(data) {
+  const { exif, tiff, image, gps } = data
+  let prop = false
+  if (!prop && exif && exif.DateTimeOriginal) { prop = exif.DateTimeOriginal }
+  if (!prop && exif && exif.DateTimeDigitized) { prop = exif.DateTimeDigitized }
+  if (!prop && exif && exif.CreateDate) { prop = exif.CreateDate }
+  if (!prop && tiff && tiff.DateTime) { prop = tiff.DateTime }
+  if (!prop && image && image.ModifyDate) { prop = image.ModifyDate }
+  if (!prop && gps && gps.GPSDateStamp) { prop = gps.GPSDateStamp }
+  return prop
 }
 
 function retryParse(filepath) {
@@ -47,18 +53,6 @@ function retryParse(filepath) {
   })
 }
 
-function parseOriginalDate(data) {
-  const { exif, tiff, image, gps } = data
-  let prop = false
-  if (!prop && exif && exif.DateTimeOriginal) { prop = exif.DateTimeOriginal }
-  if (!prop && exif && exif.DateTimeDigitized) { prop = exif.DateTimeDigitized }
-  if (!prop && exif && exif.CreateDate) { prop = exif.CreateDate }
-  if (!prop && tiff && tiff.DateTime) { prop = tiff.DateTime }
-  if (!prop && image && image.ModifyDate) { prop = image.ModifyDate }
-  if (!prop && gps && gps.GPSDateStamp) { prop = gps.GPSDateStamp }
-  return prop
-}
-
 function formatDateForCommand(image) {
   return date => {
     if (date) {
@@ -74,6 +68,7 @@ function formatDateForCommand(image) {
           return acc
         }, '')
     }
+    console.log(image.date)
     return image
   }
 }
