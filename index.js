@@ -1,81 +1,79 @@
 import fs from 'fs'
 import path from 'path'
 import c from 'chalk'
-import { extract } from 'exifdata'
 import { ExifImage as Parser } from 'exif'
 import 'shelljs/global'
 
 const [_, __, dirname] = process.argv
 const INPUT_PATH = path.resolve(process.cwd(), dirname)
+const metadataProps = [
+  ['exif', 'DateTimeOriginal', 'DateTimeDigitized', 'CreateDate'],
+  ['tiff', 'DateTime'],
+  ['image', 'ModifyDate'],
+  ['gps', 'GPSDateStamp']
+]
 
-fs.readdir(INPUT_PATH, (err, files) => {
-  files
-    .filter(x => x.toLowerCase().includes('.jpg' || '.png'))
-    .map(x => ({path: `${INPUT_PATH}/${x}`}))
-    .map(extractMetadata)
-})
-
-function extractMetadata(img) {
-  return new Promise((resolve, reject) => {
-    extract(img.path, (e, res) => resolve(e ? retryParse(img.path) : res))
-  })
-  .then(parseOriginalDate)
-  .then(formatDateForCommand(img))
-  .then(executeShellScript)
-  .catch(e => console.log('I got your error right here', e.message))
+const throwError = e =>  {
+  throw new Error(c.bgRed(e.message))
 }
 
-function parseOriginalDate(data) {
-  const { exif, tiff, image, gps } = data
-  let prop = false
-  if (!prop && exif && exif.DateTimeOriginal) { prop = exif.DateTimeOriginal }
-  if (!prop && exif && exif.DateTimeDigitized) { prop = exif.DateTimeDigitized }
-  if (!prop && exif && exif.CreateDate) { prop = exif.CreateDate }
-  if (!prop && tiff && tiff.DateTime) { prop = tiff.DateTime }
-  if (!prop && image && image.ModifyDate) { prop = image.ModifyDate }
-  if (!prop && gps && gps.GPSDateStamp) { prop = gps.GPSDateStamp }
-  return prop
+const testProp = (prop, keys) => {
+  const val = keys.filter(x => prop[x])[0]
+  return val ? prop[val] : false
 }
 
-function retryParse(filepath) {
+const getIn = obj => {
+  return (prop, ...keys) => obj[prop] ? testProp(obj[prop], keys) : false
+}
+
+const testDateTime = (...args) => {
+  return metadata => args
+    .reduce((acc, xs) => !acc
+      ? xs.reduce((_, __) => getIn(metadata)(...xs), acc)
+      : acc,
+    false)
+}
+
+const testFiletype = filename => {
+  return filename.toLowerCase().includes('.jpg' || '.png')
+}
+
+const concatPath = filename => {
+  return `${INPUT_PATH}/${filename}`
+}
+
+const concatDateTime = datetime => {
+  const [date, time] = datetime.split(' ')
+  const [ y, m, d ] = date.split(':')
+  return `${m}/${d}/${y} ${time}`
+}
+
+const executeRewriteCmd = filepath => {
+  return datetime => {
+    exec(`/usr/bin/SetFile -m "${datetime}" ${filepath}`)
+    exec(`/usr/bin/SetFile -d "${datetime}" ${filepath}`)
+  }
+}
+
+const execExtract = filepath => {
   return new Promise((resolve, reject) => {
     try {
-      new Parser({ image: filepath }, (e, res) => {
-        if (e) {
-          console.log(c.bgRed(e.message))
-          reject(null)
-        }
-        resolve(res)
-      })
+      new Parser({image: filepath}, (e, x) => resolve(x))
     } catch (e) {
-      console.log(c.bgRed(e.message))
+      reject(e)
     }
   })
+  .then(testDateTime(metadataProps))
+  .then(concatDateTime)
+  .then(executeRewriteCmd(filepath))
 }
 
-function formatDateForCommand(image) {
-  return date => {
-    if (date) {
-      image.date = date
-        .split(' ')
-        .reduce((acc, x) => {
-          if (acc === '') {
-            const [ year, month, day ] = x.split(':')
-            acc += `${month}/${day}/${year} `
-          } else {
-            acc += x
-          }
-          return acc
-        }, '')
-    }
-    console.log(image.date)
-    return image
-  }
+const execRead = (e, xs) => {
+  return e
+    ? throwError(e)
+    : xs.filter(testFiletype)
+        .map(concatPath)
+        .map(execExtract)
 }
 
-function executeShellScript(image) {
-  if (image.date) {
-    exec(`/usr/bin/SetFile -m "${image.date}" ${image.path}`)
-    exec(`/usr/bin/SetFile -d "${image.date}" ${image.path}`)
-  }
-}
+fs.readdir(INPUT_PATH, execRead)
