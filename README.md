@@ -1,3 +1,3 @@
 ## _META PRESERVE_
 
-Preserves the creation date of images by replacing File metadata with Exif metadata.
+Restores the original Created and Modified metadata of images representing the OSX/macOS File metadata back to Exif metadata.

@@ -1,79 +1,87 @@
 import fs from 'fs'
 import path from 'path'
-import c from 'chalk'
 import { ExifImage as Parser } from 'exif'
-import 'shelljs/global'
+import { exec } from 'shelljs'
 
-const [_, __, dirname] = process.argv
-const INPUT_PATH = path.resolve(process.cwd(), dirname)
-const metadataProps = [
-  ['exif', 'DateTimeOriginal', 'DateTimeDigitized', 'CreateDate'],
-  ['tiff', 'DateTime'],
+const INPUT_PATH = path.resolve(process.cwd(), process.argv[2])
+const EXIF_TAGS = [
+  ['exif',  'DateTimeOriginal', 'DateTimeDigitized', 'CreateDate'],
+  ['tiff',  'DateTime'],
   ['image', 'ModifyDate'],
-  ['gps', 'GPSDateStamp']
+  ['gps',   'GPSDateStamp']
 ]
 
-const throwError = e =>  {
-  throw new Error(c.bgRed(e.message))
-}
+fs.readdir(INPUT_PATH, (e, xs) => {
+  if (e) { throwError(e) }
+  const paths = xs
+    .filter(matchFileType)
+    .map(concatPath)
 
-const testProp = (prop, keys) => {
-  const val = keys.filter(x => prop[x])[0]
-  return val ? prop[val] : false
-}
+  Promise.all(paths.map(parseMetadata))
+    .then(xs => xs.map(x => getInRecurse(x)(...EXIF_TAGS)))
+    .then(xs => xs.map(concatDateTime))
+    .then(xs => zip(xs, paths))
+    .then(xs => xs.map(ys => execWriteCmd(...ys)))
+    .catch(catchError)
+})
 
-const getIn = obj => {
-  return (prop, ...keys) => obj[prop] ? testProp(obj[prop], keys) : false
-}
-
-const testDateTime = (...args) => {
-  return metadata => args
+function getInRecurse(obj) {
+  return (...args) => args
     .reduce((acc, xs) => !acc
-      ? xs.reduce((_, __) => getIn(metadata)(...xs), acc)
+      ? xs.reduce((_, __) => getIn(obj)(...xs), acc)
       : acc,
-    false)
+      false)
 }
 
-const testFiletype = filename => {
-  return filename.toLowerCase().includes('.jpg' || '.png')
+function getIn(obj) {
+  return (prop, ...rest) => {
+    if (obj[prop]) {
+      const val = rest.filter(x => obj[prop][x])[0]
+      if (val) {
+        return obj[prop][val]
+      }
+    }
+    return false
+  }
 }
 
-const concatPath = filename => {
-  return `${INPUT_PATH}/${filename}`
-}
-
-const concatDateTime = datetime => {
-  const [date, time] = datetime.split(' ')
+function concatDateTime(dateTime) {
+  const [date, time] = dateTime.split(' ')
   const [ y, m, d ] = date.split(':')
   return `${m}/${d}/${y} ${time}`
 }
 
-const executeRewriteCmd = filepath => {
-  return datetime => {
-    exec(`/usr/bin/SetFile -m "${datetime}" ${filepath}`)
-    exec(`/usr/bin/SetFile -d "${datetime}" ${filepath}`)
-  }
+function execWriteCmd(dateTime, filepath) {
+  exec(`/usr/bin/SetFile -m "${dateTime}" ${filepath}`)
+  exec(`/usr/bin/SetFile -d "${dateTime}" ${filepath}`)
 }
 
-const execExtract = filepath => {
+function parseMetadata(metadata) {
   return new Promise((resolve, reject) => {
-    try {
-      new Parser({image: filepath}, (e, x) => resolve(x))
-    } catch (e) {
-      reject(e)
-    }
+    new Parser({image: metadata}, (e, x) => e
+      ? throwError(e)
+      : resolve(x))
   })
-  .then(testDateTime(metadataProps))
-  .then(concatDateTime)
-  .then(executeRewriteCmd(filepath))
 }
 
-const execRead = (e, xs) => {
-  return e
-    ? throwError(e)
-    : xs.filter(testFiletype)
-        .map(concatPath)
-        .map(execExtract)
+function zip(xs, ys) {
+  return xs.map((x, i) => [x, ys[i]])
 }
 
-fs.readdir(INPUT_PATH, execRead)
+function matchFileType(filename) {
+  return /\.(jpg|jpeg|png|tiff)$/.test(filename.toLowerCase())
+}
+
+function concatPath(filename) {
+  return `${INPUT_PATH}/${filename}`
+}
+
+function catchError(e) {
+  const message = `See, what had happened was ${e.message}`
+  console.log(message)
+  return message
+}
+
+function throwError(e) {
+  throw new Error(catchError(e))
+}
