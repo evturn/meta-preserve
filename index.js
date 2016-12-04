@@ -56,10 +56,10 @@ function execWriteCmd(dateTime, filepath) {
   exec(`/usr/bin/SetFile -d "${dateTime}" ${filepath}`)
 }
 
-function parseMetadata(metadata) {
+function parseMetadata(filepath) {
   return new Promise((resolve, reject) => {
-    new Parser({image: metadata}, (e, x) => e
-      ? throwError(e)
+    new Parser({image: filepath}, (e, x) => e
+      ? catchError(e)
       : resolve(x))
   })
 }
